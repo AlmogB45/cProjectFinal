@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pwd.h>
+#include <string.h>
 
 char *getInputFromUser()
 {
@@ -21,6 +22,7 @@ char *getInputFromUser()
 
     return str;
 }
+
 char **splitArgument(char *str)
 {
     char *subStr;
@@ -116,7 +118,7 @@ void echo(char **arg)
     puts("");
 }
 
-// Concatenate all arguments after "cd".
+    // Concatenate all arguments after "cd".
     char newPath[1024]; // 
     newPath[0] = '\0'; // Initialize newPath as an empty string, and assuming it's max length is 1024.
     for (int i = 1; arg[i] != NULL; i++)
@@ -200,11 +202,32 @@ void get_dir()
     puts("");
     closedir(dir);
 }
+
 void delete(char **arg)
 {
-    if (unlink(arg[1]) != 0)
-        printf("-myShell: unlink: %s: No such file or directory\n", arg[1]);
+    // Check if the path starts with a double quote.
+    if (arg[1][0] == '\"') {
+        // If the path starts with a double quote, it's a quoted path and it removes the quotes from the beginning and end of the path.
+        char *path = arg[1] + 1; // Skip the starting quote.
+        int len = strlen(path);
+        if (path[len - 1] == '\"') {
+            path[len - 1] = '\0'; // Remove the ending quote.
+        }
+        // Now 'path' contains the path without surrounding quotes and deletes the file using the unlink function.
+        // 
+        if (unlink(path) != 0) {
+            // If unlink fails, print an error message.
+            printf("-myShell: unlink: %s: No such file or directory\n", path);
+        }
+    } else {
+        // If the path does not start with a double quote, it's a regular path and attempt to delete the file using the unlink function.
+        if (unlink(arg[1]) != 0) {
+            // If unlink fails, print an error message.
+            printf("-myShell: unlink: %s: No such file or directory\n", arg[1]);
+        }
+    }
 }
+
 void systemCall(char **arg)
 {
     pid_t pid = fork();
@@ -216,29 +239,229 @@ void systemCall(char **arg)
     if (pid == 0 && execvp(arg[0], arg) == -1)
         exit(1);
 }
-void mypipe(char **argv1, char **argv2)
-{
+
+void mypipe(char **argv1, char **argv2) {
     int fildes[2];
-    if (fork() == 0)
-    {
+    
+    // Check if the input contains the '|' character
+    char **pipe_argv1 = argv1;
+    char **pipe_argv2 = argv2;
+    char *pipe_symbol = "|";
+    int found_pipe = 0;
+
+    while (*pipe_argv1 != NULL) {
+        if (strcmp(*pipe_argv1, pipe_symbol) == 0) {
+            found_pipe = 1;
+            *pipe_argv1 = NULL;  // Replace '|' with NULL to terminate the first command
+            pipe_argv2 = pipe_argv1 + 1;  // Start the second command after '|'
+            break;
+        }
+        pipe_argv1++;
+    }
+    
+    // If '|' was not found, print an error and return
+    if (!found_pipe) {
+        printf("Error: '|' not found\n");
+        return;
+    }
+    
+    // Fork a child process
+    if (fork() == 0) {
+        // Inside the child process
+        
+        // Create a pipe
         pipe(fildes);
-        if (fork() == 0)
-        {
-            /* first component of command line */
+        
+        // Fork another child process
+        if (fork() == 0) {
+            // Inside the grandchild process (first component of command line)
+            
+            // Close standard output (STDOUT_FILENO)
             close(STDOUT_FILENO);
+            
+            // Redirect standard output to the write end of the pipe
             dup(fildes[1]);
+            
+            // Close the write end of the pipe
             close(fildes[1]);
+            
+            // Close the read end of the pipe
             close(fildes[0]);
-            /* stdout now goes to pipe */
-            /* child process does command */
+            
+            // Execute the command specified by argv1
             execvp(argv1[0], argv1);
         }
-        /* 2nd command component of command line */
+        
+        // Close standard input (STDIN_FILENO)
         close(STDIN_FILENO);
+        
+        // Redirect standard input to the read end of the pipe
         dup(fildes[0]);
+        
+        // Close the read end of the pipe
         close(fildes[0]);
+        
+        // Close the write end of the pipe
         close(fildes[1]);
-        /* standard input now comes from pipe */
+        
+        // Execute the command specified by argv2
         execvp(argv2[0], argv2);
     }
+
+void move(char **args) {
+  // Declare variables
+  char *source_path = args[1];
+  char *destination_path = args[2];
+  FILE *source_file, *destination_file;
+
+  // Open source file
+  source_file = fopen(source_path, "r");
+  if (source_file == NULL) {
+    printf("Error: Source file '%s' does not exist.\n", source_path);
+    return;
+  }
+
+  // Open destination file
+  destination_file = fopen(destination_path, "w");
+  if (destination_file == NULL) {
+    printf("Error: Could not open destination file '%s'.\n", destination_path);
+    fclose(source_file);
+    return;
+  }
+
+  // Transfer data
+  char buffer[1024];
+  size_t bytes_read;
+  while ((bytes_read = fread(buffer, 1, sizeof(buffer), source_file)) > 0) {
+    fwrite(buffer, 1, bytes_read, destination_file);
+  }
+
+  // Close files
+  fclose(source_file);
+  fclose(destination_file);
+
+  // Delete source file
+  if (remove(source_path) != 0) {
+    printf("Warning: Could not delete source file '%s'.\n", source_path);
+  }
+
+  // Success message
+  printf("File successfully moved to '%s'.\n", destination_path);
+}
+
+void echoappend(char **args) {
+  // Declare variables
+  char *string = args[1];
+  char *path = args[2];
+  FILE *file;
+
+  // Open file in append mode
+  file = fopen(path, "a");
+  if (file == NULL) {
+    // Create a new file if it doesn't exist
+    file = fopen(path, "w");
+    if (file == NULL) {
+      printf("Error: Could not create file '%s'.\n", path);
+      return;
+    }
+  }
+
+  // Append string to file
+  fprintf(file, "%s\n", string);
+
+  // Close file
+  fclose(file);
+
+  // Success message
+  printf("String successfully appended to file '%s'.\n", path);
+}
+
+void echowrite(char **args) {
+  // Declare variables
+  char *string = args[1];
+  char *path = args[2];
+  FILE *file;
+
+  // Open file in write mode
+  file = fopen(path, "w");
+  if (file == NULL) {
+    // Create a new file if it doesn't exist
+    file = fopen(path, "w");
+    if (file == NULL) {
+      printf("Error: Could not create file '%s'.\n", path);
+      return;
+    }
+  }
+
+  // Write string to file
+  fprintf(file, "%s\n", string);
+
+  // Close file
+  fclose(file);
+
+  // Success message
+  printf("String successfully written to file '%s'.\n", path);
+}
+
+void read(char **args) {
+  // Declare variables
+  char *path = args[1];
+  FILE *file;
+  char buffer[1024];
+
+  // Open file in read mode
+  file = fopen(path, "r");
+  if (file == NULL) {
+    // File does not exist, so do nothing
+    return;
+  }
+
+  // Read file contents and print to screen
+  while (fgets(buffer, sizeof(buffer), file)) {
+    printf("%s", buffer);
+  }
+
+  // Close file
+  fclose(file);
+}
+
+void wordCount(char **args) {
+  // Declare variables
+  char *option = args[1];
+  char *path = args[2];
+  FILE *file;
+  char buffer[1024];
+  int lineCount = 0;
+  int wordCount = 0;
+
+  // Open file in read mode
+  file = fopen(path, "r");
+  if (file == NULL) {
+    // File does not exist, so do nothing
+    return;
+  }
+
+  // Count lines and words
+  while (fgets(buffer, sizeof(buffer), file)) {
+    lineCount++;
+
+    // Count words in the current line
+    char *word = strtok(buffer, " ");
+    while (word != NULL) {
+      wordCount++;
+      word = strtok(NULL, " ");
+    }
+  }
+
+  // Close file
+  fclose(file);
+
+  // Print results
+  if (strcmp(option, "-l") == 0) {
+    printf("Number of lines: %d\n", lineCount);
+  } else if (strcmp(option, "-w") == 0) {
+    printf("Number of words: %d\n", wordCount);
+  }
+}
+
 }
